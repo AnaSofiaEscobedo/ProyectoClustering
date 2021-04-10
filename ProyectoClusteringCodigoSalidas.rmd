@@ -1,0 +1,255 @@
+---
+title: "**Proyecto: Clustering (codigo y salidas) **"
+author: "Ana Sofia Escobedo Muñoz"
+date: "10/04/21"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: show
+    self_contained: yes
+    theme: darkly
+    highlight: breezedark
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+# <span style="color:darkred"> **Codigo y salidas importantes** </span>
+
+```{R Importar librerias, echo= FALSE}
+suppressPackageStartupMessages(library('stringr'))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(cluster))
+suppressPackageStartupMessages(library(factoextra))
+suppressPackageStartupMessages(library(dendextend))
+suppressPackageStartupMessages(library(ape))
+```
+
+
+## <span style="color:cornflowerblue">  _Corrida de blastp_  </span>
+
+
+```{R correr blastp desde R, eval= FALSE}
+blasteo <- function(filename, pathPan){
+  query <- paste('-query', paste(pathPan, filename, sep = '/'))
+  subject <- paste('-subject', paste(pathPan, filename, sep = '/'))
+  cleanFileName <- gsub(".faa", '', filename)
+  fileOut <- paste(cleanFileName, '-blastp.out', sep= '')
+  out <- paste('-out', fileOut)
+  blastp <- paste('blastp', query, subject, '-num_threads 5 -outfmt 7 -max_hsps 1 -use_sw_tback', out)
+  system(blastp)
+  return(0)
+}
+
+blasteo('ABC.faa', '/export/storage/users/aescobed/Bioinfo_LCG/Modulo-4/Proyecto')
+```
+
+
+## <span style="color:cornflowerblue">  _Lectura de salida de blastp_  </span>
+
+
+```{R Leer archivo .out obtenido con blastp, comment= ''}
+#Solo se mantienen aquellas lineas que no sean comentarios
+quitComments <- function(line){
+	if (startsWith(x = line, prefix= '#') == FALSE) {
+		return(line)}
+	else {
+		return(NA)}
+}
+
+#Convertir a un vector una linea separada por tabs 
+splitLines <- function(line) {
+	splitedLine <- as.vector(str_split(line, pattern= '\t', simplify =TRUE))
+	return (splitedLine)
+}
+
+#Convertir un archivo output de blastp (tabular con comentarios) a un data frame sin comentarios
+fileToDataFrame <- function(filename){
+	fileContent <- readLines(filename)
+	cleanFileContent <- as.vector(sapply(fileContent, quitComments))
+	cleanestFileContent <- cleanFileContent[!is.na(cleanFileContent)]
+	fragmentedFileContent <- sapply(cleanestFileContent, splitLines)
+	preDataframeFileContent <- as.data.frame(fragmentedFileContent)
+	if (dim(preDataframeFileContent)[1] > 0){
+		names(preDataframeFileContent) <- NULL
+		dataFrameFileContent <- as.data.frame(t(preDataframeFileContent))
+		names(dataFrameFileContent) <- c('query_acc.ver', 'subject_acc.ver', '%_identity', 'alignment_length', 'mismatches', 'gap_opens', 'q._start', 'q._end', 's._start', 's. end', 'evalue', 'bit_score')
+		return(dataFrameFileContent)}
+	else {
+		return(data.frame())}
+}
+
+data <- fileToDataFrame('ABC-blastp.out')
+data
+```
+
+
+## <span style="color:cornflowerblue">  _Matriz de distancias (con bitscores)_  </span>
+
+```{R Matriz con bitscores, comment= ''}
+disMatrix <- matrix(rep(0,10000), nrow= 100, ncol=100)
+protsNames <- unique(data$query_acc.ver)
+colnames(disMatrix) <- protsNames
+row.names(disMatrix) <- protsNames
+for (protA in protsNames) {
+	for (protB in protsNames) {
+		if (protA != protB){
+			filterData <- filter(data, query_acc.ver== protA, subject_acc.ver == protB)
+			if (dim(filterData)[1] != 0){
+			bitScore <- filterData$bit_score[1]
+			disMatrix[protA, protB] <- as.numeric(bitScore)}
+			else{
+				disMatrix[protA, protB] <- as.numeric(0)}
+			}
+		else{
+			disMatrix[protA, protB] <- as.numeric(1)}
+		}
+}
+
+disMatrix[1:10, 1:10]
+```
+
+
+## <span style="color:cornflowerblue">  _Normalizacion de matriz_  </span>
+
+
+```{R Normalizacion, comment= ''}
+normDisMatrix <-matrix(rep(0,10000), nrow= 100, ncol=100)
+colnames(normDisMatrix) <- protsNames
+row.names(normDisMatrix) <- protsNames
+maxBitScore <-  max(apply(disMatrix, 1, max))
+for (protA in protsNames) {
+	for (protB in protsNames) {
+		if (protA != protB){
+			norm <- disMatrix[protA, protB]/maxBitScore
+			dis <- 1- norm
+			normDisMatrix[protA, protB] <- dis
+			}
+		}
+}
+
+normDisMatrix[1:10, 1:10]
+```
+
+
+## <span style="color:cornflowerblue">  _Ejecucion y evaluacion de metodos de clustering_  </span>
+
+### <span style="color:olivedrab"> Obtencion de numero de clusters tentativos con el metodo silhouette </span>
+
+```{R Numero de clusters tentativo single, comment= ''}
+#Para clustering single 
+fviz_nbclust(normDisMatrix, FUN = hcut, hc_func = "hclust", hc_method = "single", method = "silhouette", k.max = 10) +
+  labs(subtitle = "Silhouette method")
+```
+
+```{R Numero de clusters tentativo average, comment= ''}
+#Para clustering average 
+fviz_nbclust(normDisMatrix, FUN = hcut, hc_func = "hclust", hc_method = "average", method = "silhouette", k.max = 10) +
+  labs(subtitle = "Silhouette method")
+```
+
+```{R Numero de clusters tentativo complete, comment= ''}
+#Para clustering complete 
+fviz_nbclust(normDisMatrix, FUN = hcut, hc_func = "hclust", hc_method = "complete", method = "silhouette", k.max = 10) +
+  labs(subtitle = "Silhouette method")
+```
+
+
+```{R Numero de clusters tentativo ward, comment= ''}
+fviz_nbclust(normDisMatrix, FUN = hcut, hc_func = "hclust", hc_method = "ward.D2", method = "silhouette", k.max = 10) +
+  labs(subtitle = "Silhouette method")
+```
+
+### <span style="color:olivedrab"> Creacion de agrupamientos y arboles </span>
+
+
+```{R Creacion de arboles classic, comment= ''}
+csin <- hclust(dist(normDisMatrix, method= 'euclidean'), method = "single")
+singleTree <- as.phylo(csin)
+write.tree(phy=singleTree, file="single.tree")
+
+cave <- hclust(dist(normDisMatrix, method= 'euclidean'), method = "average")
+averageTree <- as.phylo(cave)
+write.tree(phy= averageTree, file= "average.tree")
+
+ccom <- hclust(dist(normDisMatrix, method= 'euclidean'), method = "complete")
+completeTree <- as.phylo(ccom)
+write.tree(phy= completeTree, file= "complete.tree")
+
+cwar <- hclust(dist(normDisMatrix, method= 'euclidean'), method = "ward.D2")
+wardTree <- as.phylo(cwar)
+write.tree(phy= wardTree , file= "ward.tree")
+```
+
+
+
+### <span style="color:olivedrab"> Visualizacion de grupos </span>
+
+
+```{R Corte y grupitos single, comments= ''}
+#Para clustering single 
+clustersSingle <- cutree(csin, k=5)
+fviz_cluster(list(data = normDisMatrix, cluster = clustersSingle))
+```
+
+
+```{R Corte y grupitos average, comments= ''}
+#Para clustering average
+clustersAverage <- cutree(cave, k=4)
+fviz_cluster(list(data = normDisMatrix, cluster = clustersAverage))
+```
+
+
+```{R Corte y grupitos complete, comments= ''}
+#Para clustering complete 
+clustersComplete <- cutree(ccom, k=4)
+fviz_cluster(list(data = normDisMatrix, cluster = clustersAverage))
+```
+
+
+```{R Corte y grupitos ward, comments= ''}
+# Para clustering Ward
+clustersWard <- cutree(cwar, k=4)
+fviz_cluster(list(data = normDisMatrix, cluster = clustersAverage))
+```
+
+
+### <span style="color:olivedrab"> Visualizacion de arboles en R </span>
+
+
+```{R Visualizacion de arboles en R single, comment= ''}
+plot (csin, hang = -1, main = "Single")
+rect.hclust(csin, k=5,  border=1:16)
+```
+
+
+```{R Visualizacion de arboles en R average, comment= ''}
+plot (cave, hang = -1, main = "Average")
+rect.hclust(cave, k=4,  border=1:16)
+```
+
+
+```{R Visualizacion de arboles en R complete, comment= ''}
+plot (ccom, hang = -1, main = "Complete")
+rect.hclust(ccom, k=5,  border=1:16)
+```
+
+
+```{R Visualizacion de arboles en R ward, comment= ''}
+plot (cwar, hang = -1, main = "Ward.D")
+rect.hclust(cwar, k=4,  border=1:16)
+```
+
+
+### <span style="color:olivedrab"> Evaluacion con coef() </span>
+
+```{R Evaluacion por coeficiente, comment = ''}
+coefSingle <- coef(csin)
+coefAverage <- coef(cave)
+coefComplete <- coef(ccom)
+coefWard <- coef(cwar)
+
+dfCoefs <- data.frame(Metodo= c('Single', 'Average', 'Complete', 'Ward'), Coeficiente = c(coefSingle, coefAverage, coefComplete, coefWard))
+dfCoefs
+```
+
